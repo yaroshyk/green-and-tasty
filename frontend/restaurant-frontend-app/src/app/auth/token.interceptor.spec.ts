@@ -12,10 +12,11 @@ describe('tokenInterceptor', () => {
   let http: HttpClient;
   let httpMock: HttpTestingController;
   let toastService: jasmine.SpyObj<ToastService>;
+  let authService: jasmine.SpyObj<AuthenticationService>;
 
   beforeEach(() => {
     toastService = jasmine.createSpyObj<ToastService>('ToastService', ['error']);
-    const authService = jasmine.createSpyObj<AuthenticationService>('AuthenticationService', [
+    authService = jasmine.createSpyObj<AuthenticationService>('AuthenticationService', [
       'getTokens',
     ]);
     authService.getTokens.and.returnValue(null);
@@ -59,5 +60,36 @@ describe('tokenInterceptor', () => {
 
     expect(toastService.error).not.toHaveBeenCalled();
     expect(receivedStatus).toBe(400);
+  });
+
+  it('adds the owner token to /guest/groups/ requests (group pre-order screen)', () => {
+    authService.getTokens.and.returnValue({ idToken: 'owner-id-token' } as ReturnType<AuthenticationService['getTokens']>);
+    const groupUrl = 'https://test.api/guest/groups/grp-1/sessions';
+    http.get(groupUrl).subscribe();
+
+    const req = httpMock.expectOne(groupUrl);
+    expect(req.request.headers.get('Authorization')).toBe('Bearer owner-id-token');
+    req.flush({ participants: [], total: 0 });
+  });
+
+  it('keeps the guest session token on other /guest/ requests', () => {
+    authService.getTokens.and.returnValue({ idToken: 'owner-id-token' } as ReturnType<AuthenticationService['getTokens']>);
+    const guestUrl = 'https://test.api/guest/sessions/gs-1/dishes';
+    http.post(guestUrl, {}, { headers: { Authorization: 'Bearer guest-token' } }).subscribe();
+
+    const req = httpMock.expectOne(guestUrl);
+    expect(req.request.headers.get('Authorization')).toBe('Bearer guest-token');
+    req.flush({});
+  });
+
+  it('does not show a toast for a silent /guest/groups/ request', () => {
+    const groupUrl = 'https://test.api/guest/groups/grp-1/sessions';
+    http
+      .get(groupUrl, { context: new HttpContext().set(SKIP_ERROR_TOAST, true) })
+      .subscribe({ error: () => undefined });
+
+    httpMock.expectOne(groupUrl).flush({ error: 'boom' }, { status: 500, statusText: 'Server Error' });
+
+    expect(toastService.error).not.toHaveBeenCalled();
   });
 });
