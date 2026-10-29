@@ -16,14 +16,27 @@ export const tokenInterceptor: HttpInterceptorFn = (
   next: HttpHandlerFn
 ) => {
   const toastr = inject(ToastService);
+  const authService = inject(AuthenticationService);
+  const tokens = authService.getTokens();
 
   // IMPORTANT: do not modify Guest endpoints at all.
   // Guest flow uses a different token (guest session token) and we must not touch the body.
   // Otherwise we break POST /guest/sessions payload.
+  // Exception: owner endpoints under /guest/groups/ (group pre-order screen) are protected by Cognito,
+  // so the owner's token is added there — but only when the request has no Authorization header yet.
   if (req.url.includes('/guest/')) {
-    return next(req).pipe(
+    const guestRequest =
+      req.url.includes('/guest/groups/') && !req.headers.has('Authorization') && tokens?.idToken
+        ? req.clone({ setHeaders: { Authorization: 'Bearer ' + tokens.idToken } })
+        : req;
+
+    return next(guestRequest).pipe(
       catchError((error: HttpErrorResponse) => {
         console.log(error);
+
+        if (req.context.get(SKIP_ERROR_TOAST)) {
+          return throwError(() => error);
+        }
 
         let errorMessage = 'An unexpected error occurred.';
         if (error.error && typeof error.error === 'string') {
@@ -66,9 +79,6 @@ export const tokenInterceptor: HttpInterceptorFn = (
       })
     );
   }
-
-  const authService = inject(AuthenticationService);
-  const tokens = authService.getTokens();
 
   const clonedRequest =
     tokens && tokens.idToken
